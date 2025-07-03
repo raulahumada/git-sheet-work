@@ -1,7 +1,7 @@
 import type { MetaFunction, ActionFunctionArgs } from '@remix-run/node';
 import { json } from '@remix-run/node';
 import { Form, useActionData, useNavigation } from '@remix-run/react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '~/components/ui/button';
 import {
   Card,
@@ -25,6 +25,10 @@ import {
   Upload,
   Check,
   X,
+  Folder,
+  FolderOpen,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -48,6 +52,15 @@ interface GitChange {
   deletions?: number;
   isStaged: boolean;
   isUntracked: boolean;
+}
+
+interface FileTreeNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+  children: FileTreeNode[];
+  change?: GitChange;
+  isExpanded?: boolean;
 }
 
 interface ActionData {
@@ -237,6 +250,103 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 }
 
+function buildFileTree(changes: GitChange[]): FileTreeNode[] {
+  console.log('Building file tree with', changes.length, 'changes');
+
+  const root: FileTreeNode[] = [];
+  const pathMap = new Map<string, FileTreeNode>();
+
+  // Crear nodo raíz implícito
+  pathMap.set('', {
+    name: '',
+    path: '',
+    isDirectory: true,
+    children: [],
+    isExpanded: true,
+  });
+
+  // Procesar solo los primeros 50 cambios para evitar colgarse
+  const limitedChanges = changes.slice(0, 50);
+  console.log(
+    'Processing',
+    limitedChanges.length,
+    'changes (limited for performance)'
+  );
+
+  limitedChanges.forEach((change, changeIndex) => {
+    if (changeIndex % 10 === 0) {
+      console.log(
+        `Processing change ${changeIndex}/${limitedChanges.length}: ${change.file}`
+      );
+    }
+
+    // Normalizar la ruta de archivo - manejar tanto / como \
+    const normalizedFile = change.file.replace(/\\/g, '/');
+    const parts = normalizedFile.split('/').filter((part) => part.length > 0);
+
+    if (parts.length === 0) return; // Skip empty paths
+
+    let currentPath = '';
+
+    parts.forEach((part, index) => {
+      const parentPath = currentPath;
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      const isLastPart = index === parts.length - 1;
+
+      if (!pathMap.has(currentPath)) {
+        const node: FileTreeNode = {
+          name: part,
+          path: currentPath,
+          isDirectory: !isLastPart,
+          children: [],
+          change: isLastPart ? change : undefined,
+          isExpanded: true,
+        };
+
+        pathMap.set(currentPath, node);
+
+        // Añadir al padre
+        const parent = pathMap.get(parentPath);
+        if (parent) {
+          parent.children.push(node);
+        } else {
+          root.push(node);
+        }
+      } else if (isLastPart) {
+        // Si el nodo ya existe pero es la última parte, añadir el cambio
+        const existingNode = pathMap.get(currentPath);
+        if (existingNode) {
+          existingNode.change = change;
+        }
+      }
+    });
+  });
+
+  console.log('Root nodes before sorting:', root.length);
+
+  // Ordenar recursivamente: carpetas primero, luego archivos, ambos alfabéticamente
+  function sortTree(nodes: FileTreeNode[]): FileTreeNode[] {
+    return nodes
+      .sort((a, b) => {
+        if (a.isDirectory && !b.isDirectory) return -1;
+        if (!a.isDirectory && b.isDirectory) return 1;
+        return a.name.localeCompare(b.name);
+      })
+      .map((node) => ({
+        ...node,
+        children: sortTree(node.children),
+      }));
+  }
+
+  // Si tenemos un nodo raíz implícito, devolver sus hijos
+  const rootNode = pathMap.get('');
+  const finalNodes = root.length > 0 ? root : rootNode ? rootNode.children : [];
+
+  const result = sortTree(finalNodes);
+  console.log('Final tree result:', result.length, 'root nodes');
+  return result;
+}
+
 function getStatusIcon(
   status: string,
   isStaged: boolean,
@@ -258,12 +368,195 @@ function getStatusIcon(
   }
 }
 
+function FileTreeItem({
+  node,
+  selectedFiles,
+  onFileSelect,
+  level = 0,
+  expandedFolders,
+  onToggleFolder,
+}: {
+  node: FileTreeNode;
+  selectedFiles: string[];
+  onFileSelect: (file: string, checked: boolean) => void;
+  level?: number;
+  expandedFolders: Set<string>;
+  onToggleFolder: (path: string) => void;
+}) {
+  const isExpanded = node.isDirectory ? expandedFolders.has(node.path) : false;
+  const hasChanges =
+    node.change || node.children.some((child) => hasChangesInTree(child));
+
+  const handleToggle = () => {
+    if (node.isDirectory) {
+      console.log(
+        'Toggling folder:',
+        node.path,
+        'currently expanded:',
+        isExpanded
+      );
+      onToggleFolder(node.path);
+    }
+  };
+
+  // Debug log para carpetas
+  if (node.isDirectory && level === 0) {
+    console.log(
+      'Root folder:',
+      node.name,
+      'path:',
+      node.path,
+      'expanded:',
+      isExpanded,
+      'children:',
+      node.children.length
+    );
+  }
+
+  return (
+    <div>
+      <div
+        className={`flex items-center space-x-2 py-1 px-2 hover:bg-muted/20 transition-colors cursor-pointer ${
+          level > 0 ? `ml-${level * 4}` : ''
+        }`}
+        style={{ paddingLeft: `${level * 16 + 8}px` }}
+        onClick={handleToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleToggle();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        {node.isDirectory ? (
+          <>
+            {isExpanded ? (
+              <ChevronDown className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <ChevronRight className="h-4 w-4 text-muted-foreground" />
+            )}
+            {isExpanded ? (
+              <FolderOpen className="h-4 w-4 text-blue-500" />
+            ) : (
+              <Folder className="h-4 w-4 text-blue-500" />
+            )}
+            <span className="text-sm font-medium">{node.name}</span>
+            {hasChanges && !node.change && (
+              <Badge variant="outline" className="text-xs h-5 px-1">
+                {countChangesInTree(node)}
+              </Badge>
+            )}
+          </>
+        ) : (
+          node.change && (
+            <>
+              <div className="w-4" /> {/* Espaciado para alineación */}
+              <input
+                type="checkbox"
+                checked={selectedFiles.includes(node.change?.file || '')}
+                onChange={(e) => {
+                  e.stopPropagation();
+                  if (node.change) {
+                    onFileSelect(node.change.file, e.target.checked);
+                  }
+                }}
+                className="rounded"
+                onClick={(e) => e.stopPropagation()}
+              />
+              {getStatusIcon(
+                node.change.status,
+                node.change.isStaged,
+                node.change.isUntracked
+              )}
+              <span className="text-sm font-mono">{node.name}</span>
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-xs">
+                  {node.change.status === 'M'
+                    ? 'Modificado'
+                    : node.change.status === 'A'
+                    ? 'Añadido'
+                    : node.change.status === 'D'
+                    ? 'Eliminado'
+                    : node.change.isUntracked
+                    ? 'No tracked'
+                    : node.change.status}
+                </Badge>
+                {node.change.isStaged && (
+                  <Badge
+                    variant="outline"
+                    className="text-xs text-green-600 border-green-600"
+                  >
+                    Staged
+                  </Badge>
+                )}
+              </div>
+              {(node.change.additions !== undefined ||
+                node.change.deletions !== undefined) && (
+                <div className="flex items-center space-x-2 text-xs ml-auto">
+                  {node.change.additions !== undefined &&
+                    node.change.additions > 0 && (
+                      <span className="flex items-center text-green-600">
+                        <Plus className="mr-1 h-3 w-3" />
+                        {node.change.additions}
+                      </span>
+                    )}
+                  {node.change.deletions !== undefined &&
+                    node.change.deletions > 0 && (
+                      <span className="flex items-center text-red-600">
+                        <Minus className="mr-1 h-3 w-3" />
+                        {node.change.deletions}
+                      </span>
+                    )}
+                </div>
+              )}
+            </>
+          )
+        )}
+      </div>
+
+      {node.isDirectory && isExpanded && (
+        <div>
+          {node.children.map((child) => (
+            <FileTreeItem
+              key={child.path}
+              node={child}
+              selectedFiles={selectedFiles}
+              onFileSelect={onFileSelect}
+              level={level + 1}
+              expandedFolders={expandedFolders}
+              onToggleFolder={onToggleFolder}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function hasChangesInTree(node: FileTreeNode): boolean {
+  if (node.change) return true;
+  return node.children.some((child) => hasChangesInTree(child));
+}
+
+function countChangesInTree(node: FileTreeNode): number {
+  let count = node.change ? 1 : 0;
+  node.children.forEach((child) => {
+    count += countChangesInTree(child);
+  });
+  return count;
+}
+
 export default function Index() {
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
   const [gitPath, setGitPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [commitMessage, setCommitMessage] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(
+    new Set()
+  );
 
   const isLoading = navigation.state === 'submitting';
 
@@ -286,19 +579,47 @@ export default function Index() {
     setSelectedFiles([]);
   };
 
-  // Agrupar cambios por tipo de operación, sin importar si están staged o no
-  const modifiedFiles =
-    actionData?.changes?.filter((change) => change.status === 'M') || [];
-  const addedFiles =
-    actionData?.changes?.filter(
-      (change) => change.status === 'A' || change.isUntracked
-    ) || [];
-  const deletedFiles =
-    actionData?.changes?.filter((change) => change.status === 'D') || [];
+  const handleToggleFolder = (path: string) => {
+    const newExpanded = new Set(expandedFolders);
+    if (newExpanded.has(path)) {
+      newExpanded.delete(path);
+    } else {
+      newExpanded.add(path);
+    }
+    setExpandedFolders(newExpanded);
+  };
 
   // Para operaciones git, necesitamos saber qué archivos están staged
   const stagedFiles =
     actionData?.changes?.filter((change) => change.isStaged) || [];
+
+  // Construir árbol de archivos
+  console.log('Action data changes:', actionData?.changes);
+  const fileTree = actionData?.changes ? buildFileTree(actionData.changes) : [];
+  console.log('Built file tree:', fileTree);
+
+  // Función para obtener todas las carpetas del árbol
+  const getAllFolderPaths = (nodes: FileTreeNode[]): string[] => {
+    const paths: string[] = [];
+    nodes.forEach((node) => {
+      if (node.isDirectory) {
+        paths.push(node.path);
+        paths.push(...getAllFolderPaths(node.children));
+      }
+    });
+    return paths;
+  };
+
+  // Inicializar carpetas expandidas cuando hay nuevos datos
+  useEffect(() => {
+    if (actionData?.changes && actionData.changes.length > 0) {
+      // Expandir todas las carpetas por defecto
+      const tree = buildFileTree(actionData.changes);
+      const allFolderPaths = getAllFolderPaths(tree);
+      console.log('Setting expanded folders:', allFolderPaths);
+      setExpandedFolders(new Set(allFolderPaths));
+    }
+  }, [actionData?.changes]);
 
   return (
     <div className="min-h-screen bg-background">
@@ -548,235 +869,55 @@ export default function Index() {
                 </CardContent>
               </Card>
 
-              {/* Lista de cambios por tipo */}
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Archivos Modificados */}
-                <Card className="border-border/40 shadow-sm">
-                  <CardHeader className="pb-4">
-                    <CardTitle className="text-lg font-light text-yellow-600">
-                      Modificados ({modifiedFiles.length})
-                    </CardTitle>
-                    <CardDescription>Archivos con cambios</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {modifiedFiles.length === 0 ? (
-                      <div className="text-center py-4">
-                        <p className="text-sm text-muted-foreground">
-                          No hay archivos modificados
-                        </p>
+              {/* Árbol de archivos */}
+              <Card className="border-border/40 shadow-sm">
+                <CardHeader className="pb-4">
+                  <CardTitle className="text-lg font-light">
+                    Cambios ({actionData.changes.length})
+                  </CardTitle>
+                  <CardDescription>
+                    Archivos organizados por carpetas
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {actionData.changes.length === 0 ? (
+                    <div className="text-center py-8">
+                      <p className="text-sm text-muted-foreground">
+                        No hay cambios en el repositorio
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      {/* Debug info */}
+                      <div className="text-xs text-muted-foreground">
+                        Debug: {actionData.changes.length} cambios,{' '}
+                        {fileTree.length} nodos raíz, {expandedFolders.size}{' '}
+                        carpetas expandidas
                       </div>
-                    ) : (
-                      <ScrollArea className="h-[300px] w-full">
-                        <div className="space-y-2">
-                          {modifiedFiles.map((change, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center space-x-3 p-2 rounded-md border border-border/40 hover:bg-muted/20 transition-colors"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedFiles.includes(change.file)}
-                                onChange={(e) =>
-                                  handleFileSelect(
-                                    change.file,
-                                    e.target.checked
-                                  )
-                                }
-                                className="rounded"
-                              />
-                              {getStatusIcon(
-                                change.status,
-                                change.isStaged,
-                                change.isUntracked
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <p className="font-mono text-sm truncate">
-                                  {change.file}
-                                </p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs"
-                                  >
-                                    Modificado
-                                  </Badge>
-                                  {change.isStaged && (
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs text-green-600 border-green-600"
-                                    >
-                                      Staged
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-                              {(change.additions !== undefined ||
-                                change.deletions !== undefined) && (
-                                <div className="flex items-center space-x-2 text-xs">
-                                  {change.additions !== undefined &&
-                                    change.additions > 0 && (
-                                      <span className="flex items-center text-green-600">
-                                        <Plus className="mr-1 h-3 w-3" />
-                                        {change.additions}
-                                      </span>
-                                    )}
-                                  {change.deletions !== undefined &&
-                                    change.deletions > 0 && (
-                                      <span className="flex items-center text-red-600">
-                                        <Minus className="mr-1 h-3 w-3" />
-                                        {change.deletions}
-                                      </span>
-                                    )}
-                                </div>
-                              )}
+                      <ScrollArea className="h-[500px] w-full">
+                        <div className="space-y-1">
+                          {fileTree.length === 0 ? (
+                            <div className="text-sm text-muted-foreground">
+                              No se pudo construir el árbol de archivos
                             </div>
-                          ))}
+                          ) : (
+                            fileTree.map((node) => (
+                              <FileTreeItem
+                                key={node.path}
+                                node={node}
+                                selectedFiles={selectedFiles}
+                                onFileSelect={handleFileSelect}
+                                expandedFolders={expandedFolders}
+                                onToggleFolder={handleToggleFolder}
+                              />
+                            ))
+                          )}
                         </div>
                       </ScrollArea>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Archivos Nuevos */}
-                <Card className="border-border/40 shadow-sm">
-                  <CardHeader className="pb-4">
-                    <CardTitle className="text-lg font-light text-green-600">
-                      Nuevos ({addedFiles.length})
-                    </CardTitle>
-                    <CardDescription>
-                      Archivos añadidos o sin seguimiento
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {addedFiles.length === 0 ? (
-                      <div className="text-center py-4">
-                        <p className="text-sm text-muted-foreground">
-                          No hay archivos nuevos
-                        </p>
-                      </div>
-                    ) : (
-                      <ScrollArea className="h-[300px] w-full">
-                        <div className="space-y-2">
-                          {addedFiles.map((change, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center space-x-3 p-2 rounded-md border border-border/40 hover:bg-muted/20 transition-colors"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedFiles.includes(change.file)}
-                                onChange={(e) =>
-                                  handleFileSelect(
-                                    change.file,
-                                    e.target.checked
-                                  )
-                                }
-                                className="rounded"
-                              />
-                              {getStatusIcon(
-                                change.status,
-                                change.isStaged,
-                                change.isUntracked
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <p className="font-mono text-sm truncate">
-                                  {change.file}
-                                </p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs"
-                                  >
-                                    {change.isUntracked
-                                      ? 'No tracked'
-                                      : 'Añadido'}
-                                  </Badge>
-                                  {change.isStaged && !change.isUntracked && (
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs text-green-600 border-green-600"
-                                    >
-                                      Staged
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    )}
-                  </CardContent>
-                </Card>
-
-                {/* Archivos Eliminados */}
-                <Card className="border-border/40 shadow-sm">
-                  <CardHeader className="pb-4">
-                    <CardTitle className="text-lg font-light text-red-600">
-                      Eliminados ({deletedFiles.length})
-                    </CardTitle>
-                    <CardDescription>Archivos borrados</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    {deletedFiles.length === 0 ? (
-                      <div className="text-center py-4">
-                        <p className="text-sm text-muted-foreground">
-                          No hay archivos eliminados
-                        </p>
-                      </div>
-                    ) : (
-                      <ScrollArea className="h-[300px] w-full">
-                        <div className="space-y-2">
-                          {deletedFiles.map((change, index) => (
-                            <div
-                              key={index}
-                              className="flex items-center space-x-3 p-2 rounded-md border border-border/40 hover:bg-muted/20 transition-colors"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={selectedFiles.includes(change.file)}
-                                onChange={(e) =>
-                                  handleFileSelect(
-                                    change.file,
-                                    e.target.checked
-                                  )
-                                }
-                                className="rounded"
-                              />
-                              {getStatusIcon(
-                                change.status,
-                                change.isStaged,
-                                change.isUntracked
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <p className="font-mono text-sm truncate">
-                                  {change.file}
-                                </p>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-xs"
-                                  >
-                                    Eliminado
-                                  </Badge>
-                                  {change.isStaged && (
-                                    <Badge
-                                      variant="outline"
-                                      className="text-xs text-green-600 border-green-600"
-                                    >
-                                      Staged
-                                    </Badge>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </ScrollArea>
-                    )}
-                  </CardContent>
-                </Card>
-              </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
             </>
           )}
         </div>
