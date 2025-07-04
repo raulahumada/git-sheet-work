@@ -37,6 +37,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import { toast } from 'sonner';
 import { ThemeToggle } from '~/components/theme-toggle';
+import { GoogleSheetsSync } from '~/components/google-sheets-sync';
 
 const execAsync = promisify(exec);
 
@@ -75,6 +76,19 @@ interface ActionData {
   branch?: string;
   success?: string;
   operation?: string;
+}
+
+interface FetcherData {
+  success?: boolean;
+  error?: string;
+  message?: string;
+  commit?: {
+    hash: string;
+    message: string;
+    author: string;
+    date: string;
+    files: string[];
+  };
 }
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -478,12 +492,6 @@ function FileTreeItem({
   );
 }
 
-function hasChangesInTree(node: FileTreeNode): boolean {
-  return (
-    !!node.change || node.children.some((child) => hasChangesInTree(child))
-  );
-}
-
 function countChangesInTree(node: FileTreeNode): number {
   const count = node.change ? 1 : 0;
   return (
@@ -496,6 +504,7 @@ export default function Index() {
   const actionData = useActionData<ActionData>();
   const navigation = useNavigation();
   const fetcher = useFetcher<ActionData>();
+  const commitFetcher = useFetcher<FetcherData>();
   const [gitPath, setGitPath] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [commitMessage, setCommitMessage] = useState('');
@@ -512,6 +521,7 @@ export default function Index() {
   const isLoading =
     navigation.state === 'submitting' ||
     fetcher.state === 'submitting' ||
+    commitFetcher.state === 'submitting' ||
     isUnstaging;
 
   // Usar cambios optimistas si están disponibles, sino datos del fetcher, sino actionData, sino cache
@@ -716,6 +726,39 @@ export default function Index() {
     actionData?.error,
   ]);
 
+  // Manejo del commitFetcher para commits
+  useEffect(() => {
+    const commitData = commitFetcher.data;
+
+    // Solo procesar si el estado del fetcher indica que se completó una sumisión
+    if (commitFetcher.state === 'idle' && commitData) {
+      if (commitData.success) {
+        // Mostrar toast de éxito
+        toast.success(commitData.message || 'Commit realizado con éxito', {
+          duration: 4000,
+        });
+
+        // Limpiar campos después de commit exitoso
+        setSelectedFiles([]);
+        setCommitMessage('');
+
+        // Recargar datos del repositorio solo una vez
+        if (actionData?.gitPath) {
+          const formData = new FormData();
+          formData.append('gitPath', actionData.gitPath);
+          fetcher.submit(formData, { method: 'post' });
+        }
+      }
+
+      if (commitData.error) {
+        // Mostrar toast de error
+        toast.error(commitData.error, {
+          duration: 5000,
+        });
+      }
+    }
+  }, [commitFetcher.state, commitFetcher.data, actionData?.gitPath]);
+
   return (
     <div className="min-h-screen bg-background">
       <header className="border-b border-border/40">
@@ -849,7 +892,7 @@ export default function Index() {
                         Add ({selectedFiles.length})
                       </Button>
 
-                      {/* Commit */}
+                      {/* Commit con sincronización automática */}
                       <div className="space-y-2">
                         <Input
                           placeholder="Mensaje de commit"
@@ -857,48 +900,63 @@ export default function Index() {
                           onChange={(e) => setCommitMessage(e.target.value)}
                           className="text-sm"
                         />
-                        <Form method="post">
+                        <commitFetcher.Form
+                          method="post"
+                          action="/api/commit"
+                          onSubmit={() => {
+                            console.log(
+                              'Enviando commit con archivos:',
+                              selectedFiles
+                            );
+                            console.log('Mensaje:', commitMessage);
+                            console.log('GitPath:', actionData.gitPath);
+                          }}
+                        >
+                          <input type="hidden" name="action" value="commit" />
+                          <input
+                            type="hidden"
+                            name="message"
+                            value={commitMessage}
+                          />
                           <input
                             type="hidden"
                             name="gitPath"
-                            value={actionData.gitPath}
+                            value={actionData.gitPath || ''}
                           />
-                          <input
-                            type="hidden"
-                            name="operation"
-                            value="commit"
-                          />
-                          <input
-                            type="hidden"
-                            name="commitMessage"
-                            value={commitMessage}
-                          />
-                          {currentChanges
-                            .filter((c) => c.isStaged)
-                            .map((change) => (
-                              <input
-                                key={change.file}
-                                type="hidden"
-                                name="selectedFiles"
-                                value={change.file}
-                              />
-                            ))}
+                          {selectedFiles.map((file) => (
+                            <input
+                              key={file}
+                              type="hidden"
+                              name="selectedFiles"
+                              value={file}
+                            />
+                          ))}
                           <Button
                             type="submit"
                             className="w-full"
                             variant="default"
                             disabled={
                               isLoading ||
-                              currentChanges.filter((c) => c.isStaged)
-                                .length === 0 ||
+                              (selectedFiles.length === 0 &&
+                                currentChanges.filter((c) => c.isStaged)
+                                  .length === 0) ||
                               !commitMessage
                             }
                           >
                             <GitCommit className="mr-2 h-4 w-4" />
-                            Commit (
-                            {currentChanges.filter((c) => c.isStaged).length})
+                            {isLoading
+                              ? 'Commiteando...'
+                              : `Commit + Sync (${
+                                  selectedFiles.length > 0
+                                    ? selectedFiles.length
+                                    : currentChanges.filter((c) => c.isStaged)
+                                        .length
+                                })`}
                           </Button>
-                        </Form>
+                        </commitFetcher.Form>
+                        <p className="text-xs text-muted-foreground">
+                          Se sincronizará automáticamente con Google Sheets
+                        </p>
                       </div>
 
                       {/* Push */}
@@ -1067,6 +1125,12 @@ export default function Index() {
               </Card>
             </>
           )}
+
+          {/* Sincronización con Google Sheets */}
+          <GoogleSheetsSync
+            gitPath={actionData?.gitPath}
+            isEnabled={!!actionData?.changes}
+          />
         </div>
       </main>
     </div>

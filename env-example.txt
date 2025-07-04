@@ -1,0 +1,19 @@
+# Google Sheets API Configuration
+# Copia este archivo a .env y configura las variables
+
+# Para obtener estos valores, sigue la guía en GOOGLE_SHEETS_SETUP.md
+
+# 1. ID de tu hoja de Google Sheets (se encuentra en la URL)
+GOOGLE_SHEETS_SPREADSHEET_ID=tu_spreadsheet_id_aqui
+
+# 2. Email de tu service account (del archivo JSON descargado de Google Cloud)
+GOOGLE_SHEETS_CLIENT_EMAIL=tu-service-account@tu-proyecto.iam.gserviceaccount.com
+
+# 3. Clave privada de tu service account (del archivo JSON, mantener los \n literales)
+GOOGLE_SHEETS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nTU_CLAVE_PRIVADA_AQUI\n-----END PRIVATE KEY-----\n"
+
+# INSTRUCCIONES:
+# 1. Copia este archivo: cp env-example.txt .env
+# 2. Edita .env y reemplaza los valores con tus credenciales reales
+# 3. Sigue la guía completa en GOOGLE_SHEETS_SETUP.md
+# 4. Reinicia la aplicación: npm run dev 
