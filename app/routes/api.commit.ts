@@ -40,6 +40,7 @@ export async function action({ request }: ActionFunctionArgs) {
         const commitId = formData.get('commitId') as string;
         const repositoryType =
           (formData.get('repositoryType') as 'app' | 'bd') || 'app';
+        const color = formData.get('color') as string;
 
         if (!commitId?.trim()) {
           return data(
@@ -66,7 +67,7 @@ export async function action({ request }: ActionFunctionArgs) {
         // Obtener información del commit desde Azure DevOps
         const commitInfo = await azureService.getCommitInfo(commitId);
 
-        // Sincronizar con Google Sheets incluyendo el tipo de repositorio
+        // Sincronizar con Google Sheets incluyendo el tipo de repositorio y color
         await sheetsService.addCommit({
           hash: commitInfo.hash,
           message: commitInfo.message,
@@ -74,6 +75,7 @@ export async function action({ request }: ActionFunctionArgs) {
           date: commitInfo.date,
           files: commitInfo.files,
           repositoryType,
+          color: color || '#4ECDC4', // Color por defecto si no se proporciona
         });
 
         return data({

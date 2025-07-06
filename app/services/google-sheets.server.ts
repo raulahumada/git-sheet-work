@@ -7,6 +7,7 @@ interface CommitData {
   date: string;
   files: string[];
   repositoryType?: 'app' | 'bd'; // Nuevo campo para tipo de repositorio
+  color?: string; // Color para la fila en formato hexadecimal
 }
 
 interface SheetsConfig {
@@ -122,8 +123,44 @@ class GoogleSheetsService {
   }
 
   /**
+   * Convertir color hex a RGB para Google Sheets
+   */
+  private hexToRgb(hex: string) {
+    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result
+      ? {
+          red: parseInt(result[1], 16) / 255,
+          green: parseInt(result[2], 16) / 255,
+          blue: parseInt(result[3], 16) / 255,
+        }
+      : { red: 0.3, green: 0.8, blue: 0.77 }; // Color por defecto
+  }
+
+  /**
+   * Obtener el ID de la hoja "Commits"
+   */
+  private async getCommitsSheetId(): Promise<number> {
+    try {
+      const response = await this.sheets.spreadsheets.get({
+        spreadsheetId: this.spreadsheetId,
+      });
+
+      const commitsSheet = response.data.sheets?.find(
+        (sheet) => sheet.properties?.title === 'Commits'
+      );
+
+      return commitsSheet?.properties?.sheetId ?? 0;
+    } catch (error) {
+      console.warn(
+        'No se pudo obtener el ID de la hoja Commits, usando 0 por defecto'
+      );
+      return 0;
+    }
+  }
+
+  /**
    * Agregar un nuevo commit a la hoja de Google Sheets
-   * Crea una fila por cada archivo modificado
+   * Crea una fila por cada archivo modificado y aplica color de fondo
    */
   async addCommit(commitData: CommitData): Promise<void> {
     try {
@@ -158,19 +195,73 @@ class GoogleSheetsService {
         });
       }
 
+      // Primero obtener el número de filas existentes para saber dónde empezar
+      const existingResponse = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: 'Commits!A:A',
+      });
+
+      const existingRowCount = existingResponse.data.values?.length || 1;
+      const startRowIndex = existingRowCount; // 0-based index donde empezarán las nuevas filas
+      const endRowIndex = startRowIndex + values.length;
+
+      // Agregar los valores
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A:H', // Ajustado para incluir la nueva columna de tipo de repositorio
+        range: 'Commits!A:H',
         valueInputOption: 'RAW',
         requestBody: {
           values,
         },
       });
 
+      // Aplicar color de fondo si se proporciona
+      if (commitData.color && commitData.color !== '#FFFFFF') {
+        try {
+          const rgbColor = this.hexToRgb(commitData.color);
+          const sheetId = await this.getCommitsSheetId();
+
+          await this.sheets.spreadsheets.batchUpdate({
+            spreadsheetId: this.spreadsheetId,
+            requestBody: {
+              requests: [
+                {
+                  repeatCell: {
+                    range: {
+                      sheetId: sheetId,
+                      startRowIndex: startRowIndex,
+                      endRowIndex: endRowIndex,
+                      startColumnIndex: 0,
+                      endColumnIndex: 8, // Columnas A-H
+                    },
+                    cell: {
+                      userEnteredFormat: {
+                        backgroundColor: rgbColor,
+                      },
+                    },
+                    fields: 'userEnteredFormat.backgroundColor',
+                  },
+                },
+              ],
+            },
+          });
+        } catch (formatError) {
+          console.warn(
+            'No se pudo aplicar el color, pero el commit se guardó correctamente:',
+            formatError
+          );
+          // No lanzar error, el commit ya se guardó exitosamente
+        }
+      }
+
       console.log(
         `Commit ${commitData.hash} del repositorio ${
           repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'
-        } agregado a Google Sheets con ${values.length} filas (una por archivo)`
+        } agregado a Google Sheets con ${
+          values.length
+        } filas (una por archivo)${
+          commitData.color ? ` con color ${commitData.color}` : ''
+        }`
       );
     } catch (error) {
       console.error('Error al agregar commit a Google Sheets:', error);
