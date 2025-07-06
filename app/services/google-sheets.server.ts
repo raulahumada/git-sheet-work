@@ -298,4 +298,28 @@ export function getGoogleSheetsService(): GoogleSheetsService {
   return googleSheetsService;
 }
 
+// Función para generar URL de Google Sheets
+export function getGoogleSheetsUrl(): string {
+  const spreadsheetId = process.env.GOOGLE_SHEETS_SPREADSHEET_ID;
+
+  if (!spreadsheetId) {
+    return '#';
+  }
+
+  return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+}
+
+// Función para obtener configuración de Google Sheets
+export function getGoogleSheetsConfig() {
+  return {
+    spreadsheetId: process.env.GOOGLE_SHEETS_SPREADSHEET_ID || '',
+    hasConfig: !!(
+      process.env.GOOGLE_SHEETS_SPREADSHEET_ID &&
+      process.env.GOOGLE_SHEETS_CLIENT_EMAIL &&
+      process.env.GOOGLE_SHEETS_PRIVATE_KEY
+    ),
+    url: getGoogleSheetsUrl(),
+  };
+}
+
 export type { CommitData, SheetsConfig };

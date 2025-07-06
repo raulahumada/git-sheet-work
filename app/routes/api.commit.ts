@@ -1,25 +1,29 @@
 import type { ActionFunctionArgs } from '@remix-run/node';
-import { json } from '@remix-run/node';
-import { getGitService, GitService } from '~/services/git.server';
-import { getGoogleSheetsService } from '~/services/google-sheets.server';
+import { data } from '@remix-run/node';
+import {
+  getAzureDevOpsConfig,
+  getAzureDevOpsService,
+} from '~/services/git.server';
+import {
+  getGoogleSheetsConfig,
+  getGoogleSheetsService,
+} from '~/services/google-sheets.server';
 
 export async function action({ request }: ActionFunctionArgs) {
   if (request.method !== 'POST') {
-    return json({ error: 'Método no permitido' }, { status: 405 });
+    return data({ error: 'Método no permitido' }, { status: 405 });
   }
 
   try {
     const formData = await request.formData();
     const action = formData.get('action') as string;
 
-    const gitService = getGitService();
-
     // Intentar obtener el servicio de Google Sheets y manejar errores de configuración
     let sheetsService;
     try {
       sheetsService = getGoogleSheetsService();
     } catch (error) {
-      return json(
+      return data(
         {
           error:
             'Faltan variables de entorno para Google Sheets. Revisa la configuración en el archivo .env',
@@ -29,89 +33,33 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
+    // Obtener el servicio de Azure DevOps
+    const azureService = getAzureDevOpsService();
+
+    if (!azureService) {
+      return data(
+        {
+          error:
+            'Azure DevOps no está configurado. Verifica las variables de entorno: AZURE_DEVOPS_ORGANIZATION, AZURE_DEVOPS_PROJECT, AZURE_DEVOPS_REPOSITORY, AZURE_DEVOPS_PAT',
+          success: false,
+        },
+        { status: 400 }
+      );
+    }
+
     switch (action) {
-      case 'commit': {
-        const message = formData.get('message') as string;
-        const gitPath = formData.get('gitPath') as string;
-        const selectedFiles = formData.getAll('selectedFiles') as string[];
-
-        if (!message?.trim()) {
-          return json(
-            { error: 'El mensaje del commit es requerido' },
-            { status: 400 }
-          );
-        }
-
-        if (!gitPath?.trim()) {
-          return json(
-            { error: 'La ruta del repositorio es requerida' },
-            { status: 400 }
-          );
-        }
-
-        // Crear una instancia del servicio Git con el directorio específico
-        const gitServiceWithPath = new GitService(gitPath);
-
-        // Si hay archivos seleccionados, añadirlos al staging primero
-        if (selectedFiles.length > 0) {
-          console.log('Archivos seleccionados para staging:', selectedFiles);
-          await gitServiceWithPath.addFiles(selectedFiles);
-        } else {
-          console.log(
-            'No hay archivos seleccionados, usando archivos ya en staging'
-          );
-        }
-
-        // Realizar el commit
-        const commitInfo = await gitServiceWithPath.commit(message);
-
-        // Sincronizar con Google Sheets
-        await sheetsService.addCommit({
-          hash: commitInfo.hash,
-          message: commitInfo.message,
-          author: commitInfo.author,
-          date: commitInfo.date,
-          files: commitInfo.files,
-        });
-
-        return json({
-          success: true,
-          commit: commitInfo,
-          message: 'Commit realizado y sincronizado con Google Sheets',
-        });
-      }
-
-      case 'sync-last-commit': {
-        // Obtener el último commit y sincronizarlo con Google Sheets
-        const lastCommit = await gitService.getLastCommit();
-
-        await sheetsService.addCommit({
-          hash: lastCommit.hash,
-          message: lastCommit.message,
-          author: lastCommit.author,
-          date: lastCommit.date,
-          files: lastCommit.files,
-        });
-
-        return json({
-          success: true,
-          commit: lastCommit,
-          message: 'Último commit sincronizado con Google Sheets',
-        });
-      }
-
       case 'sync-commit': {
-        const commitHash = formData.get('commitHash') as string;
+        const commitId = formData.get('commitId') as string;
 
-        if (!commitHash?.trim()) {
-          return json(
-            { error: 'El hash del commit es requerido' },
+        if (!commitId?.trim()) {
+          return data(
+            { error: 'El ID del commit es requerido' },
             { status: 400 }
           );
         }
 
-        // Obtener información del commit específico
-        const commitInfo = await gitService.getCommitInfo(commitHash);
+        // Obtener información del commit desde Azure DevOps
+        const commitInfo = await azureService.getCommitInfo(commitId);
 
         // Sincronizar con Google Sheets
         await sheetsService.addCommit({
@@ -122,10 +70,35 @@ export async function action({ request }: ActionFunctionArgs) {
           files: commitInfo.files,
         });
 
-        return json({
+        return data({
           success: true,
           commit: commitInfo,
-          message: 'Commit sincronizado con Google Sheets',
+          message: 'Commit de Azure DevOps sincronizado con Google Sheets',
+        });
+      }
+
+      case 'sync-recent-commits': {
+        const countParam = formData.get('count') as string;
+        const count = countParam ? parseInt(countParam, 10) : 10;
+
+        // Obtener commits recientes desde Azure DevOps
+        const commits = await azureService.getRecentCommits(count);
+
+        // Sincronizar todos los commits con Google Sheets
+        for (const commit of commits) {
+          await sheetsService.addCommit({
+            hash: commit.hash,
+            message: commit.message,
+            author: commit.author,
+            date: commit.date,
+            files: commit.files,
+          });
+        }
+
+        return data({
+          success: true,
+          commits,
+          message: `${commits.length} commits de Azure DevOps sincronizados con Google Sheets`,
         });
       }
 
@@ -133,7 +106,7 @@ export async function action({ request }: ActionFunctionArgs) {
         // Inicializar la hoja de Google Sheets con headers
         await sheetsService.initializeSheet();
 
-        return json({
+        return data({
           success: true,
           message: 'Hoja de Google Sheets inicializada correctamente',
         });
@@ -143,7 +116,7 @@ export async function action({ request }: ActionFunctionArgs) {
         // Obtener todos los commits de Google Sheets
         const commits = await sheetsService.getCommits();
 
-        return json({
+        return data({
           success: true,
           commits,
           message: 'Commits obtenidos de Google Sheets',
@@ -151,12 +124,12 @@ export async function action({ request }: ActionFunctionArgs) {
       }
 
       default:
-        return json({ error: 'Acción no válida' }, { status: 400 });
+        return data({ error: 'Acción no válida' }, { status: 400 });
     }
   } catch (error) {
     console.error('Error en la API de commits:', error);
 
-    return json(
+    return data(
       {
         error:
           error instanceof Error ? error.message : 'Error interno del servidor',
@@ -167,42 +140,41 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 }
 
-// También permitir GET para obtener información
+// Loader simplificado para obtener información de Azure DevOps
 export async function loader() {
   try {
-    const gitService = getGitService();
+    const azureService = getAzureDevOpsService();
 
-    // Obtener estado actual del repositorio
-    const [stagedFiles, modifiedFiles, untrackedFiles, isClean] =
-      await Promise.all([
-        gitService.getStagedFiles(),
-        gitService.getModifiedFiles(),
-        gitService.getUntrackedFiles(),
-        gitService.isClean(),
-      ]);
-
-    let lastCommit = null;
-    try {
-      lastCommit = await gitService.getLastCommit();
-    } catch (error) {
-      // El repositorio podría no tener commits aún
-      console.warn('No se pudo obtener el último commit:', error);
+    if (!azureService) {
+      return data(
+        {
+          error: 'Azure DevOps no está configurado',
+          success: false,
+        },
+        { status: 400 }
+      );
     }
 
-    return json({
+    // Obtener commits recientes para mostrar en la interfaz
+    const recentCommits = await azureService.getRecentCommits(5);
+
+    // Obtener configuración de Azure DevOps para generar URLs
+    const azureConfig = getAzureDevOpsConfig();
+
+    // Obtener configuración de Google Sheets
+    const sheetsConfig = getGoogleSheetsConfig();
+
+    return data({
       success: true,
-      repository: {
-        stagedFiles,
-        modifiedFiles,
-        untrackedFiles,
-        isClean,
-        lastCommit,
-      },
+      recentCommits,
+      azureConfig,
+      sheetsConfig,
+      message: 'Commits recientes obtenidos de Azure DevOps',
     });
   } catch (error) {
-    console.error('Error obteniendo estado del repositorio:', error);
+    console.error('Error obteniendo commits de Azure DevOps:', error);
 
-    return json(
+    return data(
       {
         error:
           error instanceof Error ? error.message : 'Error interno del servidor',

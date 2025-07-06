@@ -12,8 +12,24 @@ GOOGLE_SHEETS_CLIENT_EMAIL=tu-service-account@tu-proyecto.iam.gserviceaccount.co
 # 3. Clave privada de tu service account (del archivo JSON, mantener los \n literales)
 GOOGLE_SHEETS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nTU_CLAVE_PRIVADA_AQUI\n-----END PRIVATE KEY-----\n"
 
+# Azure DevOps Configuration (opcional)
+# Si quieres sincronizar commits desde Azure DevOps, configura estas variables:
+
+# 1. Nombre de tu organización en Azure DevOps
+AZURE_DEVOPS_ORGANIZATION=tu_organizacion
+
+# 2. Nombre del proyecto
+AZURE_DEVOPS_PROJECT=tu_proyecto
+
+# 3. Nombre del repositorio
+AZURE_DEVOPS_REPOSITORY=tu_repositorio
+
+# 4. Personal Access Token (PAT) con permisos de lectura de código
+AZURE_DEVOPS_PAT=tu_personal_access_token
+
 # INSTRUCCIONES:
 # 1. Copia este archivo: cp env-example.txt .env
 # 2. Edita .env y reemplaza los valores con tus credenciales reales
 # 3. Sigue la guía completa en GOOGLE_SHEETS_SETUP.md
-# 4. Reinicia la aplicación: npm run dev 
+# 4. Para Azure DevOps, crea un PAT en: https://dev.azure.com/TU_ORG/_usersSettings/tokens
+# 5. Reinicia la aplicación: npm run dev 
