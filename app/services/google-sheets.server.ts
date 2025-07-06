@@ -413,6 +413,195 @@ class GoogleSheetsService {
       throw new Error('No se pudieron obtener los commits de Google Sheets');
     }
   }
+
+  /**
+   * Crear una hoja con archivos únicos a partir de la hoja de commits
+   * Elimina duplicados cuando el mismo archivo aparece en múltiples commits
+   */
+  async createUniqueFilesSheet(): Promise<void> {
+    try {
+      // Obtener todos los datos de la hoja de commits
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: 'Commits!A2:H',
+      });
+
+      if (!response.data.values) {
+        throw new Error('No hay datos en la hoja de commits para procesar');
+      }
+
+      // Mapa para almacenar archivos únicos con su información más reciente
+      const uniqueFilesMap = new Map<
+        string,
+        {
+          file: string;
+          fileType: string;
+          repositoryType: string;
+          lastCommitHash: string;
+          lastCommitMessage: string;
+          lastCommitAuthor: string;
+          lastCommitDate: string;
+          commitCount: number;
+          firstCommitDate: string;
+        }
+      >();
+
+      // Procesar cada fila para encontrar archivos únicos
+      response.data.values.forEach((row: string[]) => {
+        const hash = row[0] || '';
+        const message = row[1] || '';
+        const author = row[2] || '';
+        const date = row[3] || '';
+        const file = row[4] || '';
+        const fileType = row[5] || '';
+        const repositoryType = row[6] || 'Aplicación';
+
+        // Saltear filas sin archivo o con archivos especiales
+        if (!file || file === '(sin archivos)') {
+          return;
+        }
+
+        // Crear clave única combinando archivo y tipo de repositorio
+        const fileKey = `${file}|${repositoryType}`;
+
+        if (uniqueFilesMap.has(fileKey)) {
+          // Si el archivo ya existe, actualizar con la información más reciente
+          const existing = uniqueFilesMap.get(fileKey)!;
+
+          // Comparar fechas para determinar cuál es más reciente
+          const existingDate = new Date(existing.lastCommitDate);
+          const currentDate = new Date(date);
+
+          if (currentDate > existingDate) {
+            existing.lastCommitHash = hash;
+            existing.lastCommitMessage = message;
+            existing.lastCommitAuthor = author;
+            existing.lastCommitDate = date;
+          }
+
+          // Incrementar contador de commits
+          existing.commitCount++;
+
+          // Actualizar primera fecha si es anterior
+          const firstDate = new Date(existing.firstCommitDate);
+          if (currentDate < firstDate) {
+            existing.firstCommitDate = date;
+          }
+        } else {
+          // Nuevo archivo único
+          uniqueFilesMap.set(fileKey, {
+            file,
+            fileType,
+            repositoryType,
+            lastCommitHash: hash,
+            lastCommitMessage: message,
+            lastCommitAuthor: author,
+            lastCommitDate: date,
+            commitCount: 1,
+            firstCommitDate: date,
+          });
+        }
+      });
+
+      // Crear o limpiar la hoja "Archivos Únicos"
+      const sheetName = 'Archivos Únicos';
+
+      try {
+        // Verificar si la hoja existe
+        await this.sheets.spreadsheets.values.get({
+          spreadsheetId: this.spreadsheetId,
+          range: `${sheetName}!A1:A1`,
+        });
+
+        // Si existe, limpiar el contenido
+        await this.sheets.spreadsheets.values.clear({
+          spreadsheetId: this.spreadsheetId,
+          range: `${sheetName}!A:I`,
+        });
+      } catch (error) {
+        // Si la hoja no existe, crearla
+        const err = error as { code?: number; message?: string };
+        if (
+          err?.code === 400 &&
+          err?.message?.includes('Unable to parse range')
+        ) {
+          console.log(`Creando hoja "${sheetName}"...`);
+          await this.sheets.spreadsheets.batchUpdate({
+            spreadsheetId: this.spreadsheetId,
+            requestBody: {
+              requests: [
+                {
+                  addSheet: {
+                    properties: {
+                      title: sheetName,
+                    },
+                  },
+                },
+              ],
+            },
+          });
+        } else {
+          throw error;
+        }
+      }
+
+      // Preparar los datos para la nueva hoja
+      const headers = [
+        'Archivo',
+        'Tipo de Archivo',
+        'Repositorio',
+        'Último Commit Hash',
+        'Último Commit Mensaje',
+        'Último Commit Autor',
+        'Última Fecha de Modificación',
+        'Primera Fecha de Modificación',
+        'Número de Commits que lo Tocaron',
+      ];
+
+      const values = [headers];
+
+      // Convertir el mapa a filas ordenadas por repositorio y luego por archivo
+      const sortedFiles = Array.from(uniqueFilesMap.values()).sort((a, b) => {
+        // Primero ordenar por repositorio
+        if (a.repositoryType !== b.repositoryType) {
+          return a.repositoryType.localeCompare(b.repositoryType);
+        }
+        // Luego por nombre de archivo
+        return a.file.localeCompare(b.file);
+      });
+
+      sortedFiles.forEach((fileInfo) => {
+        values.push([
+          fileInfo.file,
+          fileInfo.fileType,
+          fileInfo.repositoryType,
+          fileInfo.lastCommitHash,
+          fileInfo.lastCommitMessage,
+          fileInfo.lastCommitAuthor,
+          fileInfo.lastCommitDate,
+          fileInfo.firstCommitDate,
+          fileInfo.commitCount.toString(),
+        ]);
+      });
+
+      // Escribir los datos en la nueva hoja
+      await this.sheets.spreadsheets.values.update({
+        spreadsheetId: this.spreadsheetId,
+        range: `${sheetName}!A1:I${values.length}`,
+        valueInputOption: 'RAW',
+        requestBody: {
+          values,
+        },
+      });
+
+      console.log(
+        `Hoja "${sheetName}" creada con ${sortedFiles.length} archivos únicos`
+      );
+    } catch (error) {
+      console.error('Error al crear la hoja de archivos únicos:', error);
+      throw new Error('No se pudo crear la hoja de archivos únicos');
+    }
+  }
 }
 
 // Instancia singleton del servicio

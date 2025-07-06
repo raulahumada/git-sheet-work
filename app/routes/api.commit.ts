@@ -188,6 +188,17 @@ export async function action({ request }: ActionFunctionArgs) {
         });
       }
 
+      case 'create-unique-files-sheet': {
+        // Crear una hoja con archivos únicos eliminando duplicados
+        await sheetsService.createUniqueFilesSheet();
+
+        return data({
+          success: true,
+          message:
+            'Hoja de archivos únicos creada correctamente. Se eliminaron los duplicados y se organizaron por repositorio.',
+        });
+      }
+
       default:
         return data({ error: 'Acción no válida' }, { status: 400 });
     }
