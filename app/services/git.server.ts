@@ -1,8 +1,3 @@
-import { exec } from 'child_process';
-import { promisify } from 'util';
-
-const execAsync = promisify(exec);
-
 interface CommitInfo {
   hash: string;
   message: string;
@@ -166,175 +161,23 @@ class AzureDevOpsService {
   }
 }
 
-// Mantener la clase GitService original para compatibilidad
-export class GitService {
-  private repoPath: string;
+// Nueva función para obtener el servicio de Azure DevOps según el tipo de repositorio
+export function getAzureDevOpsService(
+  repositoryType: 'app' | 'bd' = 'app'
+): AzureDevOpsService | null {
+  const prefix =
+    repositoryType === 'app' ? 'AZURE_DEVOPS_APP_' : 'AZURE_DEVOPS_BD_';
 
-  constructor(repoPath: string = process.cwd()) {
-    this.repoPath = repoPath;
-  }
-
-  async commit(message: string): Promise<CommitInfo> {
-    try {
-      await execAsync(`git commit -m "${message}"`, {
-        cwd: this.repoPath,
-      });
-
-      const commitHash = await this.getLastCommitHash();
-      return await this.getCommitInfo(commitHash);
-    } catch (error) {
-      throw new Error(`Error al hacer commit: ${(error as Error).message}`);
-    }
-  }
-
-  async getCommitInfo(hash: string): Promise<CommitInfo> {
-    try {
-      const [commitInfo, files] = await Promise.all([
-        execAsync(`git show --format="%H|%s|%an|%ai" --name-only ${hash}`, {
-          cwd: this.repoPath,
-        }),
-        this.getCommitFiles(hash),
-      ]);
-
-      const lines = commitInfo.stdout.trim().split('\n');
-      const [commitHash, message, author, date] = lines[0].split('|');
-
-      return {
-        hash: commitHash,
-        message,
-        author,
-        date,
-        files,
-      };
-    } catch (error) {
-      throw new Error(
-        `Error al obtener información del commit: ${(error as Error).message}`
-      );
-    }
-  }
-
-  async getLastCommit(): Promise<CommitInfo> {
-    const hash = await this.getLastCommitHash();
-    return this.getCommitInfo(hash);
-  }
-
-  private async getLastCommitHash(): Promise<string> {
-    try {
-      const { stdout } = await execAsync('git rev-parse HEAD', {
-        cwd: this.repoPath,
-      });
-      return stdout.trim();
-    } catch (error) {
-      throw new Error(
-        `Error al obtener el último commit: ${(error as Error).message}`
-      );
-    }
-  }
-
-  private async getCommitFiles(hash: string): Promise<string[]> {
-    try {
-      const { stdout } = await execAsync(
-        `git diff-tree --no-commit-id --name-only -r ${hash}`,
-        {
-          cwd: this.repoPath,
-        }
-      );
-
-      return stdout
-        .trim()
-        .split('\n')
-        .filter((file) => file.length > 0);
-    } catch (error) {
-      return [];
-    }
-  }
-
-  async addFiles(files: string[]): Promise<void> {
-    const fileList = files.map((f) => `"${f}"`).join(' ');
-    await execAsync(`git add ${fileList}`, { cwd: this.repoPath });
-  }
-
-  async getStagedFiles(): Promise<string[]> {
-    try {
-      const { stdout } = await execAsync('git diff --cached --name-only', {
-        cwd: this.repoPath,
-      });
-
-      return stdout
-        .trim()
-        .split('\n')
-        .filter((file) => file.length > 0);
-    } catch (error) {
-      return [];
-    }
-  }
-
-  async getModifiedFiles(): Promise<string[]> {
-    try {
-      const { stdout } = await execAsync('git diff --name-only', {
-        cwd: this.repoPath,
-      });
-
-      return stdout
-        .trim()
-        .split('\n')
-        .filter((file) => file.length > 0);
-    } catch (error) {
-      return [];
-    }
-  }
-
-  async getUntrackedFiles(): Promise<string[]> {
-    try {
-      const { stdout } = await execAsync(
-        'git ls-files --others --exclude-standard',
-        {
-          cwd: this.repoPath,
-        }
-      );
-
-      return stdout
-        .trim()
-        .split('\n')
-        .filter((file) => file.length > 0);
-    } catch (error) {
-      return [];
-    }
-  }
-
-  async isClean(): Promise<boolean> {
-    try {
-      const { stdout } = await execAsync('git status --porcelain', {
-        cwd: this.repoPath,
-      });
-
-      return stdout.trim().length === 0;
-    } catch (error) {
-      return false;
-    }
-  }
-}
-
-// Instancia singleton del servicio Git
-let gitService: GitService | null = null;
-
-export function getGitService(): GitService {
-  if (!gitService) {
-    gitService = new GitService();
-  }
-  return gitService;
-}
-
-// Nueva función para obtener el servicio de Azure DevOps
-export function getAzureDevOpsService(): AzureDevOpsService | null {
-  const organization = process.env.AZURE_DEVOPS_ORGANIZATION;
-  const project = process.env.AZURE_DEVOPS_PROJECT;
-  const repository = process.env.AZURE_DEVOPS_REPOSITORY;
-  const pat = process.env.AZURE_DEVOPS_PAT;
+  const organization = process.env[`${prefix}ORGANIZATION`];
+  const project = process.env[`${prefix}PROJECT`];
+  const repository = process.env[`${prefix}REPOSITORY`];
+  const pat = process.env[`${prefix}PAT`];
 
   if (!organization || !project || !repository || !pat) {
     console.warn(
-      'Variables de Azure DevOps no configuradas. Funcionalidad limitada.'
+      `Variables de Azure DevOps para ${
+        repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'
+      } no configuradas. Funcionalidad limitada.`
     );
     return null;
   }
@@ -342,11 +185,17 @@ export function getAzureDevOpsService(): AzureDevOpsService | null {
   return new AzureDevOpsService(organization, project, repository, pat);
 }
 
-// Función para generar URL de commit en Azure DevOps
-export function getAzureCommitUrl(commitHash: string): string {
-  const organization = process.env.AZURE_DEVOPS_ORGANIZATION;
-  const project = process.env.AZURE_DEVOPS_PROJECT;
-  const repository = process.env.AZURE_DEVOPS_REPOSITORY;
+// Función para generar URL de commit en Azure DevOps según el tipo de repositorio
+export function getAzureCommitUrl(
+  commitHash: string,
+  repositoryType: 'app' | 'bd' = 'app'
+): string {
+  const prefix =
+    repositoryType === 'app' ? 'AZURE_DEVOPS_APP_' : 'AZURE_DEVOPS_BD_';
+
+  const organization = process.env[`${prefix}ORGANIZATION`];
+  const project = process.env[`${prefix}PROJECT`];
+  const repository = process.env[`${prefix}REPOSITORY`];
 
   if (!organization || !project || !repository) {
     return '#';
@@ -355,12 +204,39 @@ export function getAzureCommitUrl(commitHash: string): string {
   return `https://dev.azure.com/${organization}/${project}/_git/${repository}/commit/${commitHash}`;
 }
 
-// Función para obtener configuración de Azure DevOps
-export function getAzureDevOpsConfig() {
+// Función para obtener configuración de Azure DevOps según el tipo de repositorio
+export function getAzureDevOpsConfig(repositoryType: 'app' | 'bd' = 'app') {
+  const prefix =
+    repositoryType === 'app' ? 'AZURE_DEVOPS_APP_' : 'AZURE_DEVOPS_BD_';
+
   return {
-    organization: process.env.AZURE_DEVOPS_ORGANIZATION || '',
-    project: process.env.AZURE_DEVOPS_PROJECT || '',
-    repository: process.env.AZURE_DEVOPS_REPOSITORY || '',
+    organization: process.env[`${prefix}ORGANIZATION`] || '',
+    project: process.env[`${prefix}PROJECT`] || '',
+    repository: process.env[`${prefix}REPOSITORY`] || '',
+    repositoryType,
+  };
+}
+
+// Función para verificar si ambos tipos de repositorio están configurados
+export function getRepositoryAvailability() {
+  const appConfigured = !!(
+    process.env.AZURE_DEVOPS_APP_ORGANIZATION &&
+    process.env.AZURE_DEVOPS_APP_PROJECT &&
+    process.env.AZURE_DEVOPS_APP_REPOSITORY &&
+    process.env.AZURE_DEVOPS_APP_PAT
+  );
+
+  const bdConfigured = !!(
+    process.env.AZURE_DEVOPS_BD_ORGANIZATION &&
+    process.env.AZURE_DEVOPS_BD_PROJECT &&
+    process.env.AZURE_DEVOPS_BD_REPOSITORY &&
+    process.env.AZURE_DEVOPS_BD_PAT
+  );
+
+  return {
+    app: appConfigured,
+    bd: bdConfigured,
+    both: appConfigured && bdConfigured,
   };
 }
 

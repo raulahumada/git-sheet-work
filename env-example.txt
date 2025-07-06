@@ -12,24 +12,51 @@ GOOGLE_SHEETS_CLIENT_EMAIL=tu-service-account@tu-proyecto.iam.gserviceaccount.co
 # 3. Clave privada de tu service account (del archivo JSON, mantener los \n literales)
 GOOGLE_SHEETS_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nTU_CLAVE_PRIVADA_AQUI\n-----END PRIVATE KEY-----\n"
 
-# Azure DevOps Configuration (opcional)
-# Si quieres sincronizar commits desde Azure DevOps, configura estas variables:
+# Azure DevOps Configuration para APLICACIÓN
+# Configuración para el repositorio de la aplicación
 
 # 1. Nombre de tu organización en Azure DevOps
-AZURE_DEVOPS_ORGANIZATION=tu_organizacion
+AZURE_DEVOPS_APP_ORGANIZATION=tu_organizacion
 
-# 2. Nombre del proyecto
-AZURE_DEVOPS_PROJECT=tu_proyecto
+# 2. Nombre del proyecto de la aplicación
+AZURE_DEVOPS_APP_PROJECT=tu_proyecto_app
 
-# 3. Nombre del repositorio
-AZURE_DEVOPS_REPOSITORY=tu_repositorio
+# 3. Nombre del repositorio de la aplicación
+AZURE_DEVOPS_APP_REPOSITORY=tu_repositorio_app
 
 # 4. Personal Access Token (PAT) con permisos de lectura de código
-AZURE_DEVOPS_PAT=tu_personal_access_token
+AZURE_DEVOPS_APP_PAT=tu_personal_access_token_app
+
+# Azure DevOps Configuration para BASE DE DATOS
+# Configuración para el repositorio de la base de datos
+
+# 1. Nombre de tu organización en Azure DevOps (puede ser la misma)
+AZURE_DEVOPS_BD_ORGANIZATION=tu_organizacion
+
+# 2. Nombre del proyecto de la base de datos
+AZURE_DEVOPS_BD_PROJECT=tu_proyecto_bd
+
+# 3. Nombre del repositorio de la base de datos
+AZURE_DEVOPS_BD_REPOSITORY=tu_repositorio_bd
+
+# 4. Personal Access Token (PAT) con permisos de lectura de código
+AZURE_DEVOPS_BD_PAT=tu_personal_access_token_bd
 
 # INSTRUCCIONES:
 # 1. Copia este archivo: cp env-example.txt .env
 # 2. Edita .env y reemplaza los valores con tus credenciales reales
 # 3. Sigue la guía completa en GOOGLE_SHEETS_SETUP.md
 # 4. Para Azure DevOps, crea un PAT en: https://dev.azure.com/TU_ORG/_usersSettings/tokens
-# 5. Reinicia la aplicación: npm run dev 
+# 5. Puedes usar el mismo PAT para ambos repositorios si tienes acceso a ambos
+# 6. Reinicia la aplicación: npm run dev
+
+# Ejemplo de configuración:
+# AZURE_DEVOPS_APP_ORGANIZATION=miempresa
+# AZURE_DEVOPS_APP_PROJECT=MiAppWeb
+# AZURE_DEVOPS_APP_REPOSITORY=MiAppWeb
+# AZURE_DEVOPS_APP_PAT=abcd1234efgh5678ijkl9012mnop3456qrst7890
+#
+# AZURE_DEVOPS_BD_ORGANIZATION=miempresa
+# AZURE_DEVOPS_BD_PROJECT=BaseDatos
+# AZURE_DEVOPS_BD_REPOSITORY=BD_Scripts
+# AZURE_DEVOPS_BD_PAT=abcd1234efgh5678ijkl9012mnop3456qrst7890 

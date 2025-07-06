@@ -6,6 +6,7 @@ interface CommitData {
   author: string;
   date: string;
   files: string[];
+  repositoryType?: 'app' | 'bd'; // Nuevo campo para tipo de repositorio
 }
 
 interface SheetsConfig {
@@ -56,24 +57,67 @@ class GoogleSheetsService {
   }
 
   /**
-   * Determinar el tipo de archivo basado en su extensión
+   * Determinar el tipo de archivo basado en su extensión y tipo de repositorio
    */
-  private getFileType(filename: string): string {
+  private getFileType(
+    filename: string,
+    repositoryType: 'app' | 'bd' = 'app'
+  ): string {
     const extension = filename.toLowerCase().split('.').pop();
+    const normalizedPath = filename.toLowerCase().replace(/\\/g, '/');
+
+    // Para repositorios de Base de Datos
+    if (repositoryType === 'bd') {
+      if (extension === 'sql') {
+        if (normalizedPath.includes('/datamanipulation/')) {
+          return 'DML (Data Manipulation Language)';
+        } else if (normalizedPath.includes('/datadefinition/')) {
+          return 'DDL (Data Definition Language)';
+        } else {
+          return 'Archivo SQL (.sql)';
+        }
+      }
+
+      // Tipos específicos de BD
+      switch (extension) {
+        case 'pkb':
+          return 'Package Body (.pkb)';
+        case 'pks':
+          return 'Package Specification (.pks)';
+        case 'prc':
+          return 'Stored Procedure (.prc)';
+        case 'fnc':
+          return 'Function (.fnc)';
+        case 'trg':
+          return 'Trigger (.trg)';
+        case 'vw':
+          return 'View (.vw)';
+        default:
+          return `BD - Otro (.${extension || 'sin extensión'})`;
+      }
+    }
+
+    // Para repositorios de Aplicación (comportamiento original)
+    if (extension === 'sql') {
+      return 'Archivo SQL (.sql)';
+    }
 
     switch (extension) {
       case 'aspx':
         return 'Página ASPX (.aspx)';
       case 'resx':
         return 'Hoja de Recurso (.resx)';
+      case 'vbproj':
+        return 'Proyecto VB (.vbproj)';
       case 'dll':
         return 'Componente (DLL) (.dll)';
       case 'rpt':
         return 'Reporte (RPT) (.rpt)';
       case 'vb':
         return 'Clase (.vb)';
+
       default:
-        return `Otro (.${extension || 'sin extensión'})`;
+        return `App - Otro (.${extension || 'sin extensión'})`;
     }
   }
 
@@ -84,6 +128,7 @@ class GoogleSheetsService {
   async addCommit(commitData: CommitData): Promise<void> {
     try {
       const values: string[][] = [];
+      const repositoryType = commitData.repositoryType || 'app';
 
       // Si no hay archivos, crear al menos una fila con el commit
       if (commitData.files.length === 0) {
@@ -94,6 +139,7 @@ class GoogleSheetsService {
           commitData.date,
           '(sin archivos)',
           'N/A',
+          repositoryType === 'app' ? 'Aplicación' : 'Base de Datos',
           new Date().toISOString(), // Timestamp de cuándo se registró
         ]);
       } else {
@@ -105,7 +151,8 @@ class GoogleSheetsService {
             commitData.author,
             commitData.date,
             file,
-            this.getFileType(file),
+            this.getFileType(file, repositoryType),
+            repositoryType === 'app' ? 'Aplicación' : 'Base de Datos',
             new Date().toISOString(), // Timestamp de cuándo se registró
           ]);
         });
@@ -113,7 +160,7 @@ class GoogleSheetsService {
 
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A:G', // Ajustado para incluir la nueva columna
+        range: 'Commits!A:H', // Ajustado para incluir la nueva columna de tipo de repositorio
         valueInputOption: 'RAW',
         requestBody: {
           values,
@@ -121,7 +168,9 @@ class GoogleSheetsService {
       });
 
       console.log(
-        `Commit ${commitData.hash} agregado a Google Sheets con ${values.length} filas (una por archivo)`
+        `Commit ${commitData.hash} del repositorio ${
+          repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'
+        } agregado a Google Sheets con ${values.length} filas (una por archivo)`
       );
     } catch (error) {
       console.error('Error al agregar commit a Google Sheets:', error);
@@ -141,6 +190,7 @@ class GoogleSheetsService {
         'Fecha del Commit',
         'Archivo Modificado',
         'Tipo de Archivo',
+        'Repositorio',
         'Timestamp de Registro',
       ];
 
@@ -180,14 +230,14 @@ class GoogleSheetsService {
       // Verificar si ya existen headers
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A1:G1',
+        range: 'Commits!A1:H1',
       });
 
       if (!response.data.values || response.data.values.length === 0) {
         // Agregar headers si no existen
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
-          range: 'Commits!A1:G1',
+          range: 'Commits!A1:H1',
           valueInputOption: 'RAW',
           requestBody: {
             values: [headers],
@@ -227,7 +277,7 @@ class GoogleSheetsService {
     try {
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A2:G', // Omitir headers
+        range: 'Commits!A2:H', // Ajustado para incluir la nueva columna
       });
 
       if (!response.data.values) {
@@ -243,7 +293,9 @@ class GoogleSheetsService {
         const author = row[2] || '';
         const date = row[3] || '';
         const file = row[4] || '';
-        // const type = row[5] || ''; // Tipo de archivo (no necesario para la reconstrucción)
+        const repositoryTypeText = row[6] || 'Aplicación';
+        const repositoryType =
+          repositoryTypeText === 'Base de Datos' ? 'bd' : 'app';
 
         if (commitsMap.has(hash)) {
           // Si el commit ya existe, agregar el archivo a la lista
@@ -259,6 +311,7 @@ class GoogleSheetsService {
             author,
             date,
             files: file && file !== '(sin archivos)' ? [file] : [],
+            repositoryType,
           });
         }
       });

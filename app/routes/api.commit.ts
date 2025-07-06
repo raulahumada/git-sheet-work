@@ -3,6 +3,8 @@ import { data } from '@remix-run/node';
 import {
   getAzureDevOpsConfig,
   getAzureDevOpsService,
+  getRepositoryAvailability,
+  type CommitInfo,
 } from '~/services/git.server';
 import {
   getGoogleSheetsConfig,
@@ -33,23 +35,11 @@ export async function action({ request }: ActionFunctionArgs) {
       );
     }
 
-    // Obtener el servicio de Azure DevOps
-    const azureService = getAzureDevOpsService();
-
-    if (!azureService) {
-      return data(
-        {
-          error:
-            'Azure DevOps no está configurado. Verifica las variables de entorno: AZURE_DEVOPS_ORGANIZATION, AZURE_DEVOPS_PROJECT, AZURE_DEVOPS_REPOSITORY, AZURE_DEVOPS_PAT',
-          success: false,
-        },
-        { status: 400 }
-      );
-    }
-
     switch (action) {
       case 'sync-commit': {
         const commitId = formData.get('commitId') as string;
+        const repositoryType =
+          (formData.get('repositoryType') as 'app' | 'bd') || 'app';
 
         if (!commitId?.trim()) {
           return data(
@@ -58,33 +48,68 @@ export async function action({ request }: ActionFunctionArgs) {
           );
         }
 
+        // Obtener el servicio de Azure DevOps específico para el tipo de repositorio
+        const azureService = getAzureDevOpsService(repositoryType);
+
+        if (!azureService) {
+          const repoTypeName =
+            repositoryType === 'app' ? 'Aplicación' : 'Base de Datos';
+          return data(
+            {
+              error: `Azure DevOps para ${repoTypeName} no está configurado. Verifica las variables de entorno en el archivo .env`,
+              success: false,
+            },
+            { status: 400 }
+          );
+        }
+
         // Obtener información del commit desde Azure DevOps
         const commitInfo = await azureService.getCommitInfo(commitId);
 
-        // Sincronizar con Google Sheets
+        // Sincronizar con Google Sheets incluyendo el tipo de repositorio
         await sheetsService.addCommit({
           hash: commitInfo.hash,
           message: commitInfo.message,
           author: commitInfo.author,
           date: commitInfo.date,
           files: commitInfo.files,
+          repositoryType,
         });
 
         return data({
           success: true,
           commit: commitInfo,
-          message: 'Commit de Azure DevOps sincronizado con Google Sheets',
+          message: `Commit de Azure DevOps sincronizado con Google Sheets (${
+            repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'
+          })`,
         });
       }
 
       case 'sync-recent-commits': {
         const countParam = formData.get('count') as string;
+        const repositoryType =
+          (formData.get('repositoryType') as 'app' | 'bd') || 'app';
         const count = countParam ? parseInt(countParam, 10) : 10;
+
+        // Obtener el servicio de Azure DevOps específico para el tipo de repositorio
+        const azureService = getAzureDevOpsService(repositoryType);
+
+        if (!azureService) {
+          const repoTypeName =
+            repositoryType === 'app' ? 'Aplicación' : 'Base de Datos';
+          return data(
+            {
+              error: `Azure DevOps para ${repoTypeName} no está configurado. Verifica las variables de entorno en el archivo .env`,
+              success: false,
+            },
+            { status: 400 }
+          );
+        }
 
         // Obtener commits recientes desde Azure DevOps
         const commits = await azureService.getRecentCommits(count);
 
-        // Sincronizar todos los commits con Google Sheets
+        // Sincronizar todos los commits con Google Sheets incluyendo el tipo de repositorio
         for (const commit of commits) {
           await sheetsService.addCommit({
             hash: commit.hash,
@@ -92,13 +117,18 @@ export async function action({ request }: ActionFunctionArgs) {
             author: commit.author,
             date: commit.date,
             files: commit.files,
+            repositoryType,
           });
         }
 
         return data({
           success: true,
           commits,
-          message: `${commits.length} commits de Azure DevOps sincronizados con Google Sheets`,
+          message: `${
+            commits.length
+          } commits de Azure DevOps sincronizados con Google Sheets (${
+            repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'
+          })`,
         });
       }
 
@@ -123,6 +153,39 @@ export async function action({ request }: ActionFunctionArgs) {
         });
       }
 
+      case 'get-recent-commits': {
+        const countParam = formData.get('count') as string;
+        const repositoryType =
+          (formData.get('repositoryType') as 'app' | 'bd') || 'app';
+        const count = countParam ? parseInt(countParam, 10) : 5;
+
+        // Obtener el servicio de Azure DevOps específico para el tipo de repositorio
+        const azureService = getAzureDevOpsService(repositoryType);
+
+        if (!azureService) {
+          const repoTypeName =
+            repositoryType === 'app' ? 'Aplicación' : 'Base de Datos';
+          return data(
+            {
+              error: `Azure DevOps para ${repoTypeName} no está configurado. Verifica las variables de entorno en el archivo .env`,
+              success: false,
+            },
+            { status: 400 }
+          );
+        }
+
+        // Obtener commits recientes desde Azure DevOps (sin sincronizar)
+        const commits = await azureService.getRecentCommits(count);
+
+        return data({
+          success: true,
+          commits,
+          message: `Commits recientes obtenidos de Azure DevOps (${
+            repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'
+          })`,
+        });
+      }
+
       default:
         return data({ error: 'Acción no válida' }, { status: 400 });
     }
@@ -140,35 +203,54 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 }
 
-// Loader simplificado para obtener información de Azure DevOps
+// Loader para obtener información de Azure DevOps y disponibilidad de repositorios
 export async function loader() {
   try {
-    const azureService = getAzureDevOpsService();
+    // Verificar qué repositorios están configurados
+    const repoAvailability = getRepositoryAvailability();
 
-    if (!azureService) {
+    // Intentar obtener commits recientes del repositorio de aplicación por defecto
+    let recentCommits: CommitInfo[] = [];
+    let defaultRepositoryType: 'app' | 'bd' = 'app';
+
+    if (repoAvailability.app) {
+      const azureService = getAzureDevOpsService('app');
+      if (azureService) {
+        recentCommits = await azureService.getRecentCommits(5);
+        defaultRepositoryType = 'app';
+      }
+    } else if (repoAvailability.bd) {
+      const azureService = getAzureDevOpsService('bd');
+      if (azureService) {
+        recentCommits = await azureService.getRecentCommits(5);
+        defaultRepositoryType = 'bd';
+      }
+    }
+
+    if (!repoAvailability.app && !repoAvailability.bd) {
       return data(
         {
-          error: 'Azure DevOps no está configurado',
+          error: 'Ningún repositorio de Azure DevOps está configurado',
           success: false,
+          repoAvailability,
         },
         { status: 400 }
       );
     }
 
-    // Obtener commits recientes para mostrar en la interfaz
-    const recentCommits = await azureService.getRecentCommits(5);
-
-    // Obtener configuración de Azure DevOps para generar URLs
-    const azureConfig = getAzureDevOpsConfig();
-
-    // Obtener configuración de Google Sheets
+    // Obtener configuración de Azure DevOps y Google Sheets
+    const azureConfigApp = getAzureDevOpsConfig('app');
+    const azureConfigBd = getAzureDevOpsConfig('bd');
     const sheetsConfig = getGoogleSheetsConfig();
 
     return data({
       success: true,
       recentCommits,
-      azureConfig,
+      azureConfigApp,
+      azureConfigBd,
       sheetsConfig,
+      repoAvailability,
+      defaultRepositoryType,
       message: 'Commits recientes obtenidos de Azure DevOps',
     });
   } catch (error) {
