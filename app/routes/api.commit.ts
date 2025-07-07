@@ -41,6 +41,7 @@ export async function action({ request }: ActionFunctionArgs) {
         const repositoryType =
           (formData.get('repositoryType') as 'app' | 'bd') || 'app';
         const color = formData.get('color') as string;
+        const sheetName = (formData.get('sheetName') as string) || 'Commits';
 
         if (!commitId?.trim()) {
           return data(
@@ -68,21 +69,24 @@ export async function action({ request }: ActionFunctionArgs) {
         const commitInfo = await azureService.getCommitInfo(commitId);
 
         // Sincronizar con Google Sheets incluyendo el tipo de repositorio y color
-        await sheetsService.addCommit({
-          hash: commitInfo.hash,
-          message: commitInfo.message,
-          author: commitInfo.author,
-          date: commitInfo.date,
-          files: commitInfo.files,
-          repositoryType,
-          color: color || '#4ECDC4', // Color por defecto si no se proporciona
-          fileChanges: commitInfo.fileChanges, // Incluir información de tipos de cambio
-        });
+        await sheetsService.addCommit(
+          {
+            hash: commitInfo.hash,
+            message: commitInfo.message,
+            author: commitInfo.author,
+            date: commitInfo.date,
+            files: commitInfo.files,
+            repositoryType,
+            color: color || '#4ECDC4', // Color por defecto si no se proporciona
+            fileChanges: commitInfo.fileChanges, // Incluir información de tipos de cambio
+          },
+          sheetName
+        );
 
         return data({
           success: true,
           commit: commitInfo,
-          message: `Commit de Azure DevOps sincronizado con Google Sheets (${
+          message: `Commit de Azure DevOps sincronizado con la hoja "${sheetName}" (${
             repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'
           })`,
         });
@@ -122,7 +126,7 @@ export async function action({ request }: ActionFunctionArgs) {
             files: commit.files,
             repositoryType,
             fileChanges: commit.fileChanges, // Incluir información de tipos de cambio
-          });
+          }); // Sin especificar sheetName, usa "Commits" por defecto
         }
 
         return data({

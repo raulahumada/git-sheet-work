@@ -141,32 +141,115 @@ class GoogleSheetsService {
   }
 
   /**
-   * Obtener el ID de la hoja "Commits"
+   * Obtener el ID de una hoja específica por nombre
    */
-  private async getCommitsSheetId(): Promise<number> {
+  private async getSheetId(sheetName: string): Promise<number> {
     try {
       const response = await this.sheets.spreadsheets.get({
         spreadsheetId: this.spreadsheetId,
       });
 
-      const commitsSheet = response.data.sheets?.find(
-        (sheet) => sheet.properties?.title === 'Commits'
+      const sheet = response.data.sheets?.find(
+        (sheet) => sheet.properties?.title === sheetName
       );
 
-      return commitsSheet?.properties?.sheetId ?? 0;
+      return sheet?.properties?.sheetId ?? 0;
     } catch (error) {
       console.warn(
-        'No se pudo obtener el ID de la hoja Commits, usando 0 por defecto'
+        `No se pudo obtener el ID de la hoja ${sheetName}, usando 0 por defecto`
       );
       return 0;
     }
   }
 
   /**
+   * Verificar si una hoja existe y crearla con headers si no existe
+   */
+  private async ensureSheetExists(sheetName: string): Promise<void> {
+    try {
+      // Verificar si la hoja existe
+      await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: `${sheetName}!A1:A1`,
+      });
+
+      // Si llegamos aquí, la hoja existe, verificar si tiene headers
+      const response = await this.sheets.spreadsheets.values.get({
+        spreadsheetId: this.spreadsheetId,
+        range: `${sheetName}!A1:I1`,
+      });
+
+      if (!response.data.values || response.data.values.length === 0) {
+        // Agregar headers si no existen
+        await this.addHeadersToSheet(sheetName);
+      }
+    } catch (error) {
+      // Si la hoja no existe, crearla
+      const err = error as { code?: number; message?: string };
+      if (
+        err?.code === 400 &&
+        err?.message?.includes('Unable to parse range')
+      ) {
+        console.log(`Creando hoja "${sheetName}"...`);
+        await this.sheets.spreadsheets.batchUpdate({
+          spreadsheetId: this.spreadsheetId,
+          requestBody: {
+            requests: [
+              {
+                addSheet: {
+                  properties: {
+                    title: sheetName,
+                  },
+                },
+              },
+            ],
+          },
+        });
+
+        // Agregar headers a la nueva hoja
+        await this.addHeadersToSheet(sheetName);
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Agregar headers a una hoja específica
+   */
+  private async addHeadersToSheet(sheetName: string): Promise<void> {
+    const headers = [
+      'Hash del Commit',
+      'Mensaje',
+      'Autor',
+      'Fecha del Commit',
+      'Archivo Modificado',
+      'Tipo de Archivo',
+      'Tipo de Cambio',
+      'Repositorio',
+      'Timestamp de Registro',
+    ];
+
+    await this.sheets.spreadsheets.values.update({
+      spreadsheetId: this.spreadsheetId,
+      range: `${sheetName}!A1:I1`,
+      valueInputOption: 'RAW',
+      requestBody: {
+        values: [headers],
+      },
+    });
+
+    console.log(`Headers agregados a la hoja "${sheetName}"`);
+  }
+
+  /**
    * Agregar un nuevo commit a la hoja de Google Sheets
    * Crea una fila por cada archivo modificado y aplica color de fondo
    */
-  async addCommit(commitData: CommitData): Promise<void> {
+  async addCommit(
+    commitData: CommitData,
+    sheetName: string = 'Commits'
+  ): Promise<void> {
     try {
       const values: string[][] = [];
       const repositoryType = commitData.repositoryType || 'app';
@@ -215,10 +298,13 @@ class GoogleSheetsService {
         });
       }
 
+      // Verificar si la hoja existe, si no, crearla con headers
+      await this.ensureSheetExists(sheetName);
+
       // Primero obtener el número de filas existentes para saber dónde empezar
       const existingResponse = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A:A',
+        range: `${sheetName}!A:A`,
       });
 
       const existingRowCount = existingResponse.data.values?.length || 1;
@@ -228,7 +314,7 @@ class GoogleSheetsService {
       // Agregar los valores
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A:I', // Extendido a la columna I para incluir tipo de cambio
+        range: `${sheetName}!A:I`, // Extendido a la columna I para incluir tipo de cambio
         valueInputOption: 'RAW',
         requestBody: {
           values,
@@ -239,7 +325,7 @@ class GoogleSheetsService {
       if (commitData.color && commitData.color !== '#FFFFFF') {
         try {
           const rgbColor = this.hexToRgb(commitData.color);
-          const sheetId = await this.getCommitsSheetId();
+          const sheetId = await this.getSheetId(sheetName);
 
           await this.sheets.spreadsheets.batchUpdate({
             spreadsheetId: this.spreadsheetId,
@@ -277,7 +363,7 @@ class GoogleSheetsService {
       console.log(
         `Commit ${commitData.hash} del repositorio ${
           repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'
-        } agregado a Google Sheets con ${
+        } agregado a la hoja "${sheetName}" con ${
           values.length
         } filas (una por archivo)${
           commitData.color ? ` con color ${commitData.color}` : ''

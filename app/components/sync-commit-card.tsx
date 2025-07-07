@@ -61,6 +61,7 @@ export function SyncCommitCard({
   const [repositoryType, setRepositoryType] = useState<'app' | 'bd'>('app');
   const [selectedColor, setSelectedColor] = useState(DEFAULT_COLOR);
   const [isColorLoaded, setIsColorLoaded] = useState(false);
+  const [sheetName, setSheetName] = useState('');
 
   // Cargar color guardado del localStorage al montar el componente
   useEffect(() => {
@@ -99,6 +100,8 @@ export function SyncCommitCard({
     formData.append('commitId', commitId.trim());
     formData.append('repositoryType', repositoryType);
     formData.append('color', selectedColor); // Enviar el color seleccionado
+    // Si hay un nombre de hoja personalizado, enviarlo; sino usar "Commits" por defecto
+    formData.append('sheetName', sheetName.trim() || 'Commits');
 
     syncCommitFetcher.submit(formData, {
       method: 'POST',
@@ -118,7 +121,7 @@ export function SyncCommitCard({
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="space-y-2">
             <Label htmlFor="commitId">ID del Commit</Label>
             <Input
@@ -154,6 +157,17 @@ export function SyncCommitCard({
                 )}
               </SelectContent>
             </Select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="sheetName">Nombre de Hoja (Opcional)</Label>
+            <Input
+              id="sheetName"
+              type="text"
+              placeholder="Por defecto: Commits"
+              value={sheetName}
+              onChange={(e) => setSheetName(e.target.value)}
+              disabled={isLoading || syncCommitFetcher.state === 'submitting'}
+            />
           </div>
           <div className="space-y-2">
             <Label htmlFor="colorPicker">Color de la fila</Label>
@@ -237,7 +251,7 @@ export function SyncCommitCard({
           ) : (
             <div className="flex items-center justify-center gap-2">
               <span>
-                Sincronizar Commit (
+                Sincronizar a &quot;{sheetName.trim() || 'Commits'}&quot; (
                 {repositoryType === 'app' ? 'Aplicación' : 'Base de Datos'})
               </span>
               <div
