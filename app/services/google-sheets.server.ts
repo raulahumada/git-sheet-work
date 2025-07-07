@@ -8,6 +8,10 @@ interface CommitData {
   files: string[];
   repositoryType?: 'app' | 'bd'; // Nuevo campo para tipo de repositorio
   color?: string; // Color para la fila en formato hexadecimal
+  fileChanges?: Array<{
+    file: string;
+    changeType: 'nuevo' | 'modificacion' | 'eliminacion';
+  }>;
 }
 
 interface SheetsConfig {
@@ -176,12 +180,27 @@ class GoogleSheetsService {
           commitData.date,
           '(sin archivos)',
           'N/A',
+          'N/A', // Tipo de cambio
           repositoryType === 'app' ? 'Aplicación' : 'Base de Datos',
           new Date().toISOString(), // Timestamp de cuándo se registró
         ]);
       } else {
         // Crear una fila por cada archivo
         commitData.files.forEach((file) => {
+          // Buscar el tipo de cambio para este archivo específico
+          const fileChange = commitData.fileChanges?.find(
+            (fc) => fc.file === file
+          );
+          const changeType = fileChange?.changeType || 'modificacion'; // Por defecto modificación
+
+          // Convertir a español
+          const changeTypeSpanish =
+            changeType === 'nuevo'
+              ? 'Nuevo'
+              : changeType === 'eliminacion'
+              ? 'Eliminación'
+              : 'Modificación';
+
           values.push([
             commitData.hash,
             commitData.message,
@@ -189,6 +208,7 @@ class GoogleSheetsService {
             commitData.date,
             file,
             this.getFileType(file, repositoryType),
+            changeTypeSpanish,
             repositoryType === 'app' ? 'Aplicación' : 'Base de Datos',
             new Date().toISOString(), // Timestamp de cuándo se registró
           ]);
@@ -208,7 +228,7 @@ class GoogleSheetsService {
       // Agregar los valores
       await this.sheets.spreadsheets.values.append({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A:H',
+        range: 'Commits!A:I', // Extendido a la columna I para incluir tipo de cambio
         valueInputOption: 'RAW',
         requestBody: {
           values,
@@ -232,7 +252,7 @@ class GoogleSheetsService {
                       startRowIndex: startRowIndex,
                       endRowIndex: endRowIndex,
                       startColumnIndex: 0,
-                      endColumnIndex: 8, // Columnas A-H
+                      endColumnIndex: 9, // Columnas A-I
                     },
                     cell: {
                       userEnteredFormat: {
@@ -281,6 +301,7 @@ class GoogleSheetsService {
         'Fecha del Commit',
         'Archivo Modificado',
         'Tipo de Archivo',
+        'Tipo de Cambio',
         'Repositorio',
         'Timestamp de Registro',
       ];
@@ -321,14 +342,14 @@ class GoogleSheetsService {
       // Verificar si ya existen headers
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A1:H1',
+        range: 'Commits!A1:I1',
       });
 
       if (!response.data.values || response.data.values.length === 0) {
         // Agregar headers si no existen
         await this.sheets.spreadsheets.values.update({
           spreadsheetId: this.spreadsheetId,
-          range: 'Commits!A1:H1',
+          range: 'Commits!A1:I1',
           valueInputOption: 'RAW',
           requestBody: {
             values: [headers],
@@ -368,7 +389,7 @@ class GoogleSheetsService {
     try {
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A2:H', // Ajustado para incluir la nueva columna
+        range: 'Commits!A2:I', // Ajustado para incluir la nueva columna de tipo de cambio
       });
 
       if (!response.data.values) {
@@ -384,26 +405,61 @@ class GoogleSheetsService {
         const author = row[2] || '';
         const date = row[3] || '';
         const file = row[4] || '';
-        const repositoryTypeText = row[6] || 'Aplicación';
+        const changeTypeText = row[6] || 'Modificación';
+        const repositoryTypeText = row[7] || 'Aplicación';
         const repositoryType =
           repositoryTypeText === 'Base de Datos' ? 'bd' : 'app';
+
+        // Convertir tipo de cambio de español a inglés
+        const changeType =
+          changeTypeText === 'Nuevo'
+            ? 'nuevo'
+            : changeTypeText === 'Eliminación'
+            ? 'eliminacion'
+            : 'modificacion';
 
         if (commitsMap.has(hash)) {
           // Si el commit ya existe, agregar el archivo a la lista
           const existingCommit = commitsMap.get(hash)!;
           if (file && file !== '(sin archivos)') {
             existingCommit.files.push(file);
+            // Agregar también la información de cambio
+            if (!existingCommit.fileChanges) {
+              existingCommit.fileChanges = [];
+            }
+            existingCommit.fileChanges.push({
+              file,
+              changeType: changeType as
+                | 'nuevo'
+                | 'modificacion'
+                | 'eliminacion',
+            });
           }
         } else {
           // Crear nuevo commit
-          commitsMap.set(hash, {
+          const newCommit: CommitData = {
             hash,
             message,
             author,
             date,
             files: file && file !== '(sin archivos)' ? [file] : [],
             repositoryType,
-          });
+          };
+
+          // Agregar información de cambio si hay archivo
+          if (file && file !== '(sin archivos)') {
+            newCommit.fileChanges = [
+              {
+                file,
+                changeType: changeType as
+                  | 'nuevo'
+                  | 'modificacion'
+                  | 'eliminacion',
+              },
+            ];
+          }
+
+          commitsMap.set(hash, newCommit);
         }
       });
 
@@ -416,14 +472,14 @@ class GoogleSheetsService {
 
   /**
    * Crear una hoja con archivos únicos a partir de la hoja de commits
-   * Elimina duplicados cuando el mismo archivo aparece en múltiples commits
+   * Solo incluye archivos con tipo de cambio "Nuevo" y "Modificación" para guía del RM
    */
   async createUniqueFilesSheet(): Promise<void> {
     try {
       // Obtener todos los datos de la hoja de commits
       const response = await this.sheets.spreadsheets.values.get({
         spreadsheetId: this.spreadsheetId,
-        range: 'Commits!A2:H',
+        range: 'Commits!A2:I',
       });
 
       if (!response.data.values) {
@@ -441,6 +497,7 @@ class GoogleSheetsService {
           lastCommitMessage: string;
           lastCommitAuthor: string;
           lastCommitDate: string;
+          lastChangeType: string;
           commitCount: number;
           firstCommitDate: string;
         }
@@ -454,10 +511,16 @@ class GoogleSheetsService {
         const date = row[3] || '';
         const file = row[4] || '';
         const fileType = row[5] || '';
-        const repositoryType = row[6] || 'Aplicación';
+        const changeType = row[6] || 'Modificación';
+        const repositoryType = row[7] || 'Aplicación';
 
         // Saltear filas sin archivo o con archivos especiales
         if (!file || file === '(sin archivos)') {
+          return;
+        }
+
+        // FILTRO: Solo incluir archivos nuevos y modificados, excluir eliminaciones
+        if (changeType === 'Eliminación') {
           return;
         }
 
@@ -477,6 +540,7 @@ class GoogleSheetsService {
             existing.lastCommitMessage = message;
             existing.lastCommitAuthor = author;
             existing.lastCommitDate = date;
+            existing.lastChangeType = changeType;
           }
 
           // Incrementar contador de commits
@@ -497,14 +561,15 @@ class GoogleSheetsService {
             lastCommitMessage: message,
             lastCommitAuthor: author,
             lastCommitDate: date,
+            lastChangeType: changeType,
             commitCount: 1,
             firstCommitDate: date,
           });
         }
       });
 
-      // Crear o limpiar la hoja "Archivos Únicos"
-      const sheetName = 'Archivos Únicos';
+      // Crear o limpiar la hoja "Archivos para Pasaje"
+      const sheetName = 'Archivos para Pasaje';
 
       try {
         // Verificar si la hoja existe
@@ -516,7 +581,7 @@ class GoogleSheetsService {
         // Si existe, limpiar el contenido
         await this.sheets.spreadsheets.values.clear({
           spreadsheetId: this.spreadsheetId,
-          range: `${sheetName}!A:I`,
+          range: `${sheetName}!A:J`,
         });
       } catch (error) {
         // Si la hoja no existe, crearla
@@ -554,6 +619,7 @@ class GoogleSheetsService {
         'Último Commit Mensaje',
         'Último Commit Autor',
         'Última Fecha de Modificación',
+        'Último Tipo de Cambio',
         'Primera Fecha de Modificación',
         'Número de Commits que lo Tocaron',
       ];
@@ -579,6 +645,7 @@ class GoogleSheetsService {
           fileInfo.lastCommitMessage,
           fileInfo.lastCommitAuthor,
           fileInfo.lastCommitDate,
+          fileInfo.lastChangeType,
           fileInfo.firstCommitDate,
           fileInfo.commitCount.toString(),
         ]);
@@ -587,7 +654,7 @@ class GoogleSheetsService {
       // Escribir los datos en la nueva hoja
       await this.sheets.spreadsheets.values.update({
         spreadsheetId: this.spreadsheetId,
-        range: `${sheetName}!A1:I${values.length}`,
+        range: `${sheetName}!A1:J${values.length}`,
         valueInputOption: 'RAW',
         requestBody: {
           values,
@@ -595,7 +662,7 @@ class GoogleSheetsService {
       });
 
       console.log(
-        `Hoja "${sheetName}" creada con ${sortedFiles.length} archivos únicos`
+        `Hoja "${sheetName}" creada con ${sortedFiles.length} archivos únicos (solo nuevos y modificados para el RM)`
       );
     } catch (error) {
       console.error('Error al crear la hoja de archivos únicos:', error);

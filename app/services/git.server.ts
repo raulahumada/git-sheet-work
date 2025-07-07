@@ -4,6 +4,10 @@ interface CommitInfo {
   author: string;
   date: string;
   files: string[];
+  fileChanges?: Array<{
+    file: string;
+    changeType: 'nuevo' | 'modificacion' | 'eliminacion';
+  }>;
 }
 
 interface AzureDevOpsCommit {
@@ -79,25 +83,70 @@ class AzureDevOpsService {
       const commitData: AzureDevOpsCommit = await commitResponse.json();
       const changesData = await changesResponse.json();
 
-      // Extraer archivos modificados (filtrar solo archivos, no carpetas)
-      const files =
-        changesData.changes
-          ?.map(
-            (change: {
-              item: { path: string; isFolder?: boolean };
-              changeType: string;
-            }) => {
-              // Remover el primer slash si existe
-              return change.item.path.startsWith('/')
-                ? change.item.path.substring(1)
-                : change.item.path;
+      // Mapear tipos de cambio de Azure DevOps a nuestros tipos
+      const mapChangeType = (
+        azureChangeType: string
+      ): 'nuevo' | 'modificacion' | 'eliminacion' => {
+        switch (azureChangeType.toLowerCase()) {
+          case 'add':
+            return 'nuevo';
+          case 'delete':
+            return 'eliminacion';
+          case 'edit':
+          case 'rename':
+          default:
+            return 'modificacion';
+        }
+      };
+
+      // Procesar archivos y sus tipos de cambio
+      const fileChanges: Array<{
+        file: string;
+        changeType: 'nuevo' | 'modificacion' | 'eliminacion';
+      }> = [];
+      const files: string[] = [];
+
+      changesData.changes?.forEach(
+        (change: {
+          item: { path: string; isFolder?: boolean };
+          changeType: string;
+          sourceServerItem?: string; // Para casos de rename
+        }) => {
+          // Remover el primer slash si existe
+          const filePath = change.item.path.startsWith('/')
+            ? change.item.path.substring(1)
+            : change.item.path;
+
+          // Filtrar solo archivos reales (que tengan extensión)
+          if (filePath.includes('.') && !filePath.endsWith('/')) {
+            const changeType = mapChangeType(change.changeType);
+
+            files.push(filePath);
+            fileChanges.push({
+              file: filePath,
+              changeType: changeType,
+            });
+
+            // Si es un rename, también registrar el archivo original como eliminado
+            if (
+              change.changeType.toLowerCase() === 'rename' &&
+              change.sourceServerItem
+            ) {
+              const originalPath = change.sourceServerItem.startsWith('/')
+                ? change.sourceServerItem.substring(1)
+                : change.sourceServerItem;
+
+              if (originalPath.includes('.') && !originalPath.endsWith('/')) {
+                files.push(originalPath);
+                fileChanges.push({
+                  file: originalPath,
+                  changeType: 'eliminacion',
+                });
+              }
             }
-          )
-          .filter((path: string) => {
-            // Filtrar solo archivos reales (que tengan extensión)
-            // Excluir carpetas (que terminan en / o no tienen extensión)
-            return path.includes('.') && !path.endsWith('/');
-          }) || [];
+          }
+        }
+      );
 
       return {
         hash: commitData.commitId,
@@ -105,6 +154,7 @@ class AzureDevOpsService {
         author: commitData.author.name,
         date: commitData.author.date,
         files: files,
+        fileChanges: fileChanges,
       };
     } catch (error) {
       console.error(

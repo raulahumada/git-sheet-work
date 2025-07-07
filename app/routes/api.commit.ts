@@ -76,6 +76,7 @@ export async function action({ request }: ActionFunctionArgs) {
           files: commitInfo.files,
           repositoryType,
           color: color || '#4ECDC4', // Color por defecto si no se proporciona
+          fileChanges: commitInfo.fileChanges, // Incluir información de tipos de cambio
         });
 
         return data({
@@ -120,6 +121,7 @@ export async function action({ request }: ActionFunctionArgs) {
             date: commit.date,
             files: commit.files,
             repositoryType,
+            fileChanges: commit.fileChanges, // Incluir información de tipos de cambio
           });
         }
 
@@ -195,7 +197,7 @@ export async function action({ request }: ActionFunctionArgs) {
         return data({
           success: true,
           message:
-            'Hoja de archivos únicos creada correctamente. Se eliminaron los duplicados y se organizaron por repositorio.',
+            'Hoja de archivos para pasaje creada correctamente. Se incluyeron solo archivos nuevos y modificados (excluyendo eliminaciones) para guía del RM.',
         });
       }
 

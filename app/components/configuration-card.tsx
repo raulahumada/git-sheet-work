@@ -104,12 +104,12 @@ export function ConfigurationCard({ isLoading }: ConfigurationCardProps) {
             {uniqueFilesFetcher.state === 'submitting' ? (
               <>
                 <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                Generando hoja de archivos únicos...
+                Generando hoja para pasaje...
               </>
             ) : (
               <>
                 <FileSpreadsheet className="mr-2 h-4 w-4" />
-                Crear hoja de archivos únicos
+                Crear hoja de archivos para pasaje
               </>
             )}
           </Button>
@@ -119,7 +119,7 @@ export function ConfigurationCard({ isLoading }: ConfigurationCardProps) {
             <div className="text-sm text-green-600 dark:text-green-400 bg-green-50 dark:bg-green-950/30 p-3 rounded-md border border-green-200 dark:border-green-800 mt-3">
               ✅{' '}
               {uniqueFilesFetcher.data.message ||
-                'Hoja de archivos únicos creada correctamente'}
+                'Hoja de archivos para pasaje creada correctamente (solo nuevos y modificados)'}
             </div>
           )}
 
@@ -130,7 +130,7 @@ export function ConfigurationCard({ isLoading }: ConfigurationCardProps) {
               <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-950/30 p-3 rounded-md border border-red-200 dark:border-red-800 mt-3">
                 ❌{' '}
                 {uniqueFilesFetcher.data.error ||
-                  'No se pudo crear la hoja de archivos únicos'}
+                  'No se pudo crear la hoja de archivos para pasaje'}
               </div>
             )}
         </div>
